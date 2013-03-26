@@ -4,16 +4,16 @@
     <artifactId>cassandra-utils</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <name>Cassandra utils</name>
+    <name>SAIS utils</name>
     
     <dependencies>
-    	
-    	<!-- Hazelcast -->
-    	<dependency>
-			<groupId>com.hazelcast</groupId>
-			<artifactId>hazelcast-all</artifactId>
-			<version>2.5</version>
-		</dependency>
+        
+        <!-- Hazelcast -->
+        <dependency>
+            <groupId>com.hazelcast</groupId>
+            <artifactId>hazelcast-all</artifactId>
+            <version>2.5</version>
+        </dependency>
     
         <!-- DataStax CQL driver -->
         <dependency>
@@ -47,17 +47,17 @@
     </dependencies>
     
     <build>
-		<defaultGoal>install</defaultGoal>
-		<plugins>
-		    <plugin>
-				<artifactId>maven-compiler-plugin</artifactId>
-				<version>2.3.2</version>
-				<configuration>
-					<source>1.6</source>
-					<target>1.6</target>
-				</configuration>
-		    </plugin>
-		</plugins>
-	</build> 
+        <defaultGoal>install</defaultGoal>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>2.3.2</version>
+                <configuration>
+                    <source>1.6</source>
+                    <target>1.6</target>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build> 
     
 </project>
