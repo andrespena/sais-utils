@@ -1,14 +1,23 @@
 package com.sais.utils.counting;
 
+import java.util.Date;
+
+import org.joda.time.DateTime;
+
+import com.datastax.driver.core.ConsistencyLevel;
+import com.datastax.driver.core.Session;
+import com.datastax.driver.core.querybuilder.Batch;
+import com.datastax.driver.core.querybuilder.Delete;
+import com.datastax.driver.core.querybuilder.QueryBuilder;
+import com.datastax.driver.core.querybuilder.Update;
+import com.hazelcast.core.Transaction;
 import com.sais.utils.cassandra.Keyspace;
 
 public class Counter {
 
-	// The Cassandra keyspace
-	private Keyspace keyspace;
+	
+	private Session session;
 	private String cfName;
-
-	// The path's names in the analytic's hierarchical name tree
 	private String name;
 
 	/**
@@ -25,9 +34,9 @@ public class Counter {
 	 * @param cfName
 	 * @param name
 	 */
-	Counter(Keyspace keyspace, String cfName, String name) {
-		if (keyspace == null) {
-			throw new IllegalArgumentException("A not null keyspace is required");
+	Counter(Session session, String cfName, String name) {
+		if (session == null) {
+			throw new IllegalArgumentException("A not null session is required");
 		}
 		if (cfName == null || cfName.isEmpty()) {
 			throw new IllegalArgumentException("A not null or empty column family name is required");
@@ -35,7 +44,7 @@ public class Counter {
 		if (name == null || name.isEmpty()) {
 			throw new IllegalArgumentException("A not null or empty counter name is required");
 		}
-		this.keyspace = keyspace;
+		this.session = session;
 		this.cfName = cfName;
 		this.name = name;
 	}
@@ -48,83 +57,79 @@ public class Counter {
 		return name;
 	}
 	
-//	/**
-//	 * Increase this in one unit for the current date.
-//	 * 
-//	 * @param transaction the atomic {@link Transaction} to be used
-//	 */
-//	public void update(Transaction transaction) {
-//		update(transaction, new Date(), null);		
-//	}
-//    
-//	/**
-//	 * Increase this in one unit for the specified date.
-//	 * 
-//	 * @param transaction the atomic {@link Transaction} to be used
-//	 * @param date
-//	 */
-//	public void update(Transaction transaction, Date date) {
-//		update(transaction, date, null);
-//	}
-//    
-//	/**
-//	 * Increase this in one unit for the current date using the specified event
-//	 * value for means, deviations and variances.
-//	 * 
-//	 * @param transaction the atomic {@link Transaction} to be used
-//	 * @param value the event's value for means, deviations and variances
-//	 */
-//	public void update(Transaction transaction, Long value) {
-//		update(transaction, new Date(), value);
-//	}
-//
-//	/**
-//	 * Updates the value of this {@link Counter} and of all its ancestors using
-//	 * the specified value and date.
-//	 * 
-//	 * @param transaction the atomic {@link Transaction} to be used
-//	 * @param date the event's date
-//	 * @param value the event's value for means, deviations and variances
-//	 */
-//	public void update(Date time, Long value) {
-//		
-//		Mutator mutator = keyspace.getMutator(ConsistencyLevel.QUORUM, null, NullPolicy.IGNORE);
-//
-//		// Build row key
-//		String rowKey = getName();
-//
-//		// Iterate over all time granularities
-//		for (TimeGranularity granularity : TimeGranularity.values()) {
-//
-//			// Increment counts counter
-//			Composite countsColName = getColumnName(ValueType.COUNTS, granularity, time, true);
-//			transaction.updateCounterColumn(cfName, rowKey, countsColName, 1);
-//
-//			// Increment value statistics only if a value is provided
-//			if (value != null) {
-//
-//				// Increment sums counter
-//				Composite sumsColName = getColumnName(ValueType.SUMS, granularity, time, true);
-//				transaction.updateCounterColumn(cfName, rowKey, sumsColName, value);
-//
-//				// Increment squares counter
-//				Composite squaresColName = getColumnName(ValueType.SQUARES, granularity, time, true);
-//				transaction.updateCounterColumn(cfName, rowKey, squaresColName, value * value);
-//
-//			}
-//		}
-//	}
-//
-//	/**
-//	 * Deletes this from database.
-//	 * 
-//	 * @param transaction the atomic {@link Transaction} to be used
-//	 */
-//	public void delete(Transaction transaction) {
-//		String rowKey = getRowKey();
-//		transaction.deleteRow(cfName, rowKey);
-//	}
-//
+	/**
+	 * Increase this in one unit for the current date.
+	 * 
+	 * @param transaction the atomic {@link Transaction} to be used
+	 */
+	public void update() {
+		update(new Date(), null);		
+	}
+    
+	/**
+	 * Increase this in one unit for the specified date.
+	 * 
+	 * @param transaction the atomic {@link Transaction} to be used
+	 * @param date
+	 */
+	public void update(Date date) {
+		update(date, null);
+	}
+    
+	/**
+	 * Increase this in one unit for the current date using the specified event
+	 * value for means, deviations and variances.
+	 * 
+	 * @param transaction the atomic {@link Transaction} to be used
+	 * @param value the event's value for means, deviations and variances
+	 */
+	public void update(Long value) {
+		update(new Date(), value);
+	}
+
+	/**
+	 * Updates the value of this {@link Counter} and of all its ancestors using
+	 * the specified value and date.
+	 * 
+	 * @param transaction the atomic {@link Transaction} to be used
+	 * @param date the event's date
+	 * @param value the event's value for means, deviations and variances
+	 */
+	public void update(Date date, Long value) {		
+		Batch batch = QueryBuilder.batch();
+		for (TimeGranularity granularity : TimeGranularity.values()) {
+			batch.add(update(ValueType.COUNTS, granularity, date, 1L));
+			if (value != null) {
+				batch.add(update(ValueType.SUMS, granularity, date, value));
+				batch.add(update(ValueType.SQUARES, granularity, date, value * value));
+			}
+		}		
+		session.execute(batch);
+	}
+	
+	private Update update(ValueType type, TimeGranularity granularity, Date date, Long value) {
+		Update update = QueryBuilder.update(cfName);
+		update.setConsistencyLevel(ConsistencyLevel.QUORUM);
+		update.where(QueryBuilder.eq("name", name));
+		update.where(QueryBuilder.eq("type", type.getCode()));
+		update.where(QueryBuilder.eq("granularity", mapTimeGranularityName(granularity)));
+		update.where(QueryBuilder.eq("time", normalizeDate(granularity, date)));
+		update.with(QueryBuilder.incr("value", value));
+		return update;
+	}
+
+	/**
+	 * Deletes this from database.
+	 * 
+	 * @param transaction the atomic {@link Transaction} to be used
+	 */
+	public void delete() {
+		Delete delete = QueryBuilder.delete().from(cfName);
+		delete.setConsistencyLevel(ConsistencyLevel.QUORUM);
+		delete.where(QueryBuilder.eq("name", name));
+		session.execute(delete);
+	}
+
 //	/**
 //	 * Get the both column families row key for this node.
 //	 * 
@@ -280,71 +285,71 @@ public class Counter {
 //		builder.append(name);
 //		return builder.toString();
 //	}
-//
-//	/**
-//	 * Enumerated type representing the type of a value.
-//	 */
-//	private static enum ValueType {
-//
-//		COUNTS("counts"), SUMS("sums"), SQUARES("squares");
-//
-//		private String code;
-//
-//		private ValueType(String code) {
-//			this.code = code;
-//		}
-//
-//		private String getCode() {
-//			return code;
-//		}
-//	}
-//
-//	private String mapTimeGranularityName(TimeGranularity granularity) {
-//		switch (granularity) {
-//		case ALL:
-//			return "all";
-//		case MINUTELY:
-//			return "minutelly";
-//		case HOURLY:
-//			return "hourly";
-//		case DAILY:
-//			return "daily";
-//		case MONTHLY:
-//			return "monthly";
-//		case YEARLY:
-//			return "yearly";
-//		default:
-//			throw new RuntimeException();
-//		}
-//	}
-//
-//	private Date normalizeDate(TimeGranularity granularity, Date date) {
-//		DateTime dateTime = new DateTime(date);
-//		switch (granularity) {
-//		case MINUTELY:
-//			return new DateTime(dateTime.getYear(),
-//			                    dateTime.getMonthOfYear(),
-//			                    dateTime.getDayOfMonth(),
-//			                    dateTime.getHourOfDay(),
-//			                    dateTime.getMinuteOfHour()).toDate();
-//		case HOURLY:
-//			return new DateTime(dateTime.getYear(),
-//			                    dateTime.getMonthOfYear(),
-//			                    dateTime.getDayOfMonth(),
-//			                    dateTime.getHourOfDay(),
-//			                    0).toDate();
-//		case DAILY:
-//			return new DateTime(dateTime.getYear(), dateTime.getMonthOfYear(), dateTime.getDayOfMonth(), 0, 0).toDate();
-//		case MONTHLY:
-//			return new DateTime(dateTime.getYear(), dateTime.getMonthOfYear(), 1, 0, 0).toDate();
-//		case YEARLY:
-//			return new DateTime(dateTime.getYear(), 1, 1, 0, 0).toDate();
-//		case ALL:
-//			return new DateTime(0).toDate();
-//		default:
-//			throw new RuntimeException();
-//		}
-//	}
+
+	/**
+	 * Enumerated type representing the type of a value.
+	 */
+	private static enum ValueType {
+
+		COUNTS("counts"), SUMS("sums"), SQUARES("squares");
+
+		private String code;
+
+		private ValueType(String code) {
+			this.code = code;
+		}
+
+		private String getCode() {
+			return code;
+		}
+	}
+
+	private String mapTimeGranularityName(TimeGranularity granularity) {
+		switch (granularity) {
+		case ALL:
+			return "all";
+		case MINUTELY:
+			return "minutelly";
+		case HOURLY:
+			return "hourly";
+		case DAILY:
+			return "daily";
+		case MONTHLY:
+			return "monthly";
+		case YEARLY:
+			return "yearly";
+		default:
+			throw new RuntimeException();
+		}
+	}
+
+	private Date normalizeDate(TimeGranularity granularity, Date date) {
+		DateTime dateTime = new DateTime(date);
+		switch (granularity) {
+		case MINUTELY:
+			return new DateTime(dateTime.getYear(),
+			                    dateTime.getMonthOfYear(),
+			                    dateTime.getDayOfMonth(),
+			                    dateTime.getHourOfDay(),
+			                    dateTime.getMinuteOfHour()).toDate();
+		case HOURLY:
+			return new DateTime(dateTime.getYear(),
+			                    dateTime.getMonthOfYear(),
+			                    dateTime.getDayOfMonth(),
+			                    dateTime.getHourOfDay(),
+			                    0).toDate();
+		case DAILY:
+			return new DateTime(dateTime.getYear(), dateTime.getMonthOfYear(), dateTime.getDayOfMonth(), 0, 0).toDate();
+		case MONTHLY:
+			return new DateTime(dateTime.getYear(), dateTime.getMonthOfYear(), 1, 0, 0).toDate();
+		case YEARLY:
+			return new DateTime(dateTime.getYear(), 1, 1, 0, 0).toDate();
+		case ALL:
+			return new DateTime(0).toDate();
+		default:
+			throw new RuntimeException();
+		}
+	}
 
 	/**
 	 * Enumerated type representing the type of a statistical indicator.

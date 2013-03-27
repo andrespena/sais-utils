@@ -3,9 +3,9 @@ package com.sais.utils.cassandra;
 import java.util.LinkedList;
 import java.util.List;
 
+import com.datastax.driver.core.querybuilder.Assignment;
 import com.datastax.driver.core.querybuilder.Clause;
 import com.datastax.driver.core.querybuilder.Delete;
-import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Update;
 
@@ -133,16 +133,16 @@ public class Mutator {
 				throw new RuntimeException("Null treatment policy misunderstanded");
 			}
 		} else {
-			Insert insert = QueryBuilder.insertInto(keyspaceName, tableName);
-			insert.setConsistencyLevel(cl == null ? defaultCL.toCQLDriverCL() : cl.toCQLDriverCL());
+			Update update = QueryBuilder.update(keyspaceName, tableName);
+			update.setConsistencyLevel(cl == null ? defaultCL.toCQLDriverCL() : cl.toCQLDriverCL());
 			if (columnTTL != null) {
-				insert.using(QueryBuilder.ttl(columnTTL));
+				update.using(QueryBuilder.ttl(columnTTL));
 			} else if (defaultTTL != null) {
-				insert.using(QueryBuilder.ttl(defaultTTL));
+				update.using(QueryBuilder.ttl(defaultTTL));
 			}
-			insert.value(keyName, keyValue);
-			insert.value(columnName, columnValue);
-			statements.add(insert.getQueryString());
+			update.where(QueryBuilder.eq(keyName, keyValue));
+			update.with(QueryBuilder.set(columnName, columnValue));
+			statements.add(update.getQueryString());
 		}
 		return this;
 	}
@@ -307,7 +307,6 @@ public class Mutator {
 	 * @return
 	 */
 	public String getBatchStatement() {
-
 		StringBuilder builder = new StringBuilder();
 		builder.append("BEGIN BATCH\n");
 		for (String statement : getStatements()) {
@@ -330,6 +329,7 @@ public class Mutator {
 	 * 
 	 */
 	public void executeAsync() {
+		System.out.println(this.toString());
 		keyspace.executeAsync(this);
 	}
 

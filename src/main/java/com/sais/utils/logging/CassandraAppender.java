@@ -9,14 +9,18 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.log4j.Appender;
 import org.apache.log4j.AppenderSkeleton;
 import org.apache.log4j.spi.LoggingEvent;
 import org.apache.log4j.spi.ThrowableInformation;
 
-import com.sais.utils.cassandra.ConsistencyLevel;
-import com.sais.utils.cassandra.Keyspace;
-import com.sais.utils.cassandra.Mutator;
-import com.sais.utils.cassandra.NullPolicy;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.Cluster.Builder;
+import com.datastax.driver.core.ConsistencyLevel;
+import com.datastax.driver.core.Session;
+import com.datastax.driver.core.querybuilder.Batch;
+import com.datastax.driver.core.querybuilder.Insert;
+import com.datastax.driver.core.querybuilder.QueryBuilder;
 
 /**
  * Log4j {@link Appender} using Cassandra distributed database.
@@ -44,7 +48,7 @@ public class CassandraAppender extends AppenderSkeleton {
 	private Boolean synchronicity = DEFAULT_SYNCHRONICITY;
 
 	/* Inner attributes */
-	private Keyspace keyspace;
+	private Session session;
 	private String hostName;
 	private String hostAddress;
 	private final BlockingQueue<LoggingEvent> queue = new LinkedBlockingQueue<LoggingEvent>();
@@ -103,8 +107,7 @@ public class CassandraAppender extends AppenderSkeleton {
 	 *            database
 	 */
 	public void setBufferSize(int bufferSize) {
-		if (bufferSize <= 0)
-			throw new IllegalArgumentException("The buffer size must be greater than zero");
+		if (bufferSize <= 0) throw new IllegalArgumentException("The buffer size must be greater than zero");
 		this.bufferSize = bufferSize;
 	}
 
@@ -150,7 +153,10 @@ public class CassandraAppender extends AppenderSkeleton {
 	}
 
 	private void initialize() {
-		this.keyspace = new Keyspace(hosts, keyspaceName);
+		Builder builder = Cluster.builder();
+		builder.addContactPoints(hosts.split(","));
+		Cluster cluster = builder.build();
+		this.session = cluster.connect(keyspaceName);
 		this.initialized = true;
 	}
 
@@ -163,11 +169,9 @@ public class CassandraAppender extends AppenderSkeleton {
 	 */
 	@Override
 	protected void append(LoggingEvent event) {
-		if (!initialized)
-			initialize();
+		if (!initialized) initialize();
 		queue.add(event);
-		if (queue.size() >= bufferSize)
-			flush();
+		if (queue.size() >= bufferSize) flush();
 	}
 
 	/***
@@ -177,7 +181,7 @@ public class CassandraAppender extends AppenderSkeleton {
 	@Override
 	public void close() {
 		flush();
-		keyspace.shutdown();
+		session.shutdown();
 	}
 
 	/***
@@ -192,77 +196,69 @@ public class CassandraAppender extends AppenderSkeleton {
 	private void flush() {
 		List<LoggingEvent> events = new ArrayList<LoggingEvent>();
 		int numEvents = queue.drainTo(events);
-		if (numEvents <= 0)
-			return;
-		Mutator mutator = keyspace.getMutator(consistencyLevel, ttlSeconds, NullPolicy.IGNORE);
-		for (LoggingEvent event : events)
-			writeEvent(mutator, event);
-		if (synchronicity)
-			mutator.execute();
-		else
-			mutator.executeAsync();
-
+		if (numEvents <= 0) return;
+		Batch batch = QueryBuilder.batch();
+		for (LoggingEvent event : events) {
+			addToBatch(batch, event);
+		}
+		if (synchronicity) {
+			session.execute(batch);
+		} else {
+			session.executeAsync(batch);
+		}
 	}
 
-	private void writeEvent(Mutator m, LoggingEvent event) {
+	private void insert(Insert insert, String name, Object value) {
+		if (value != null) insert.value(name, value);
+	}
 
-		// Setup event's key
-		final String keyName = "key";
-		com.eaio.uuid.UUID eaio = new com.eaio.uuid.UUID();
-		UUID keyValue = UUID.fromString(eaio.toString());
+	private void addToBatch(Batch batch, LoggingEvent event) {
+
+		// Build query
+		Insert insert = QueryBuilder.insertInto(columnFamilyName);
+		insert.setConsistencyLevel(consistencyLevel);
+		if (ttlSeconds != null) insert.using(QueryBuilder.ttl(ttlSeconds));
 
 		// Append general info
-		m.insertColumn(columnFamilyName, keyName, keyValue, "logger_name", event.getLoggerName())
-		 .insertColumn(columnFamilyName, keyName, keyValue, "log_level", event.getLevel().toString())
-		 .insertColumn(columnFamilyName, keyName, keyValue, "log_timestamp", event.getTimeStamp())
-		 .insertColumn(columnFamilyName, keyName, keyValue, "context_host_name", hostName)
-		 .insertColumn(columnFamilyName, keyName, keyValue, "context_host_ip", hostAddress)
-		 .insertColumn(columnFamilyName, keyName, keyValue, "context_app_start_time", LoggingEvent.getStartTime())
-		 .insertColumn(columnFamilyName, keyName, keyValue, "context_ndc", event.getNDC())
-		 .insertColumn(columnFamilyName, keyName, keyValue, "context_thread", event.getThreadName())
-		 .insertColumn(columnFamilyName,
-		               keyName,
-		               keyValue,
-		               "context_file",
-		               event.getLocationInformation().getFileName())
-		 .insertColumn(columnFamilyName,
-		               keyName,
-		               keyValue,
-		               "context_class",
-		               event.getLocationInformation().getClassName())
-		 .insertColumn(columnFamilyName,
-		               keyName,
-		               keyValue,
-		               "context_method",
-		               event.getLocationInformation().getMethodName())
-		 .insertColumn(columnFamilyName,
-		               keyName,
-		               keyValue,
-		               "context_line",
-		               event.getLocationInformation().getLineNumber());
+		insert(insert, "key", UUID.fromString(new com.eaio.uuid.UUID().toString()));
+		insert(insert, "logger_name", event.getLoggerName());
+		insert(insert, "log_level", event.getLevel().toString());
+		insert(insert, "log_timestamp", event.getTimeStamp());
+		insert(insert, "context_host_name", hostName);
+		insert(insert, "context_host_ip", hostAddress);
+		insert(insert, "context_app_start_time", LoggingEvent.getStartTime());
+		insert(insert, "context_ndc", event.getNDC());
+		insert(insert, "context_thread", event.getThreadName());
+		insert(insert, "context_file", event.getLocationInformation().getFileName());
+		insert(insert, "context_class", event.getLocationInformation().getClassName());
+		insert(insert, "context_method", event.getLocationInformation().getMethodName());
+		insert(insert, "context_line", event.getLocationInformation().getLineNumber());
 
 		// Append message info
 		Object message = event.getMessage();
 		if (message == null) {
-			m.insertColumn(columnFamilyName, keyName, keyValue, "message_exists", false);
+			insert(insert, "message_exists", false);
 		} else {
-			m.insertColumn(columnFamilyName, keyName, keyValue, "message_exists", true)
-			 .insertColumn(columnFamilyName, keyName, keyValue, "message_class", message.getClass().getName())
-			 .insertColumn(columnFamilyName, keyName, keyValue, "message_rendered", event.getRenderedMessage());
+			insert(insert, "message_exists", true);
+			insert(insert, "message_class", message.getClass().getName());
+			insert(insert, "message_rendered", event.getRenderedMessage());
 		}
 
 		// Append exception info
-		ThrowableInformation throwableInformation = event.getThrowableInformation();
-		Throwable throwable = throwableInformation == null ? null : throwableInformation.getThrowable();
+		ThrowableInformation ti = event.getThrowableInformation();
+		Throwable throwable = ti == null ? null : ti.getThrowable();
 		if (throwable == null) {
-			m.insertColumn(columnFamilyName, keyName, keyValue, "throwable_exists", false);
+			insert(insert, "throwable_exists", false);
 		} else {
 			String stacktrace = StringUtils.join(event.getThrowableStrRep(), '\n');
-			m.insertColumn(columnFamilyName, keyName, keyValue, "throwable_exists", true)
-			 .insertColumn(columnFamilyName, keyName, keyValue, "throwable_class", throwable.getClass().getName())
-			 .insertColumn(columnFamilyName, keyName, keyValue, "throwable_message", throwable.getMessage())
-			 .insertColumn(columnFamilyName, keyName, keyValue, "throwable_stacktrace", stacktrace);
+			insert(insert, "throwable_exists", true);
+			insert(insert, "throwable_class", throwable.getClass().getName());
+			insert(insert, "throwable_message", throwable.getMessage());
+			insert(insert, "throwable_stacktrace", stacktrace);
 		}
+
+		// Add to batch
+		batch.add(insert);
 	}
 
 }

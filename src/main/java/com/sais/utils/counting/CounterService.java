@@ -1,19 +1,24 @@
 package com.sais.utils.counting;
 
-import com.sais.utils.cassandra.Keyspace;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.Session;
+import com.datastax.driver.core.Cluster.Builder;
 
 public class CounterService {
 	
-	private Keyspace keyspace;
 	private String columnFamilyName;
+	private Session session;
 
 	public CounterService(String contactPoints, String keyspaceName, String columnFamilyName) {
-		this.keyspace = new Keyspace(contactPoints, keyspaceName);
 		this.columnFamilyName = columnFamilyName;
+		Builder builder = Cluster.builder();
+		builder.addContactPoints(contactPoints.split(","));
+		Cluster cluster = builder.build();
+		this.session = cluster.connect(keyspaceName);
     }
 	
 	public Counter getCounter(String name) {
-		return new Counter(keyspace, columnFamilyName, name);
+		return new Counter(session, columnFamilyName, name);
 	}
 	
 
