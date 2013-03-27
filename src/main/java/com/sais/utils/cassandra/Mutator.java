@@ -16,8 +16,6 @@ public class Mutator {
 	private ConsistencyLevel defaultCL;
 	private Integer defaultTTL;
 	private NullPolicy defaultNullTreatmentPolicy;
-	private boolean synchronous;
-	private boolean atomic;
 
 	private final List<String> statements = new LinkedList<String>();
 
@@ -33,9 +31,7 @@ public class Mutator {
 	public Mutator(Keyspace keyspace,
 	               Integer defaultTTL,
 	               ConsistencyLevel defaultConsistencyLevel,
-	               NullPolicy defaultNullTreatmentPolicy,
-	               boolean synchronous,
-	               boolean atomic) {
+	               NullPolicy defaultNullTreatmentPolicy) {
 		this.keyspace = keyspace;
 		this.keyspaceName = keyspace.getName();
 		this.defaultTTL = defaultTTL;
@@ -73,18 +69,6 @@ public class Mutator {
 	 */
 	public NullPolicy getDefaultNullTreatmentPolicy() {
 		return defaultNullTreatmentPolicy;
-	}
-
-	public boolean isSynchronous() {
-		return synchronous;
-	}
-
-	/**
-	 * 
-	 * @return
-	 */
-	public boolean isAtomic() {
-		return atomic;
 	}
 
 	/**
@@ -325,11 +309,7 @@ public class Mutator {
 	public String getBatchStatement() {
 
 		StringBuilder builder = new StringBuilder();
-		if (atomic) {
-			builder.append("BEGIN BATCH\n");
-		} else {
-			builder.append("BEGIN UNLOGGED BATCH\n");
-		}
+		builder.append("BEGIN BATCH\n");
 		for (String statement : getStatements()) {
 			builder.append('\t');
 			builder.append(statement);
@@ -344,6 +324,13 @@ public class Mutator {
 	 */
 	public void execute() {
 		keyspace.execute(this);
+	}
+
+	/**
+	 * 
+	 */
+	public void executeAsync() {
+		keyspace.executeAsync(this);
 	}
 
 	/*

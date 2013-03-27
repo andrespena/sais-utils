@@ -2,38 +2,43 @@ package com.sais.utils.locking;
 
 import java.util.LinkedList;
 
-import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.core.IMap;
 
-public class Locks {
+/**
+ * Class representing a stack of globally distributed {@link Lock}s
+ * 
+ * @author andres
+ *
+ */
+public class LockStack {
 
-    /** The Hazelcast instance */
-    private HazelcastInstance hazelcast;
+    private IMap<String, ?> map;
     
     /** The managed locks */
     private LinkedList<Lock> locks;
 
-	public Locks(HazelcastInstance hazelcast) {
+	LockStack(IMap<String, ?> map) {
 	    super();
-	    this.hazelcast = hazelcast;
+	    this.map = map;
 	    this.locks = new LinkedList<Lock>();
     }
     
 	/**
-	 * Adds to this transaction a distributed global lock identified by the
+	 * Adds to this stack a distributed global lock identified by the
 	 * specified prefix and optional arguments.
 	 * 
 	 * @param prefix the prefix of the lock's name
 	 * @param arguments the optional arguments of the lock's name
 	 */
 	public void pushLock(String prefix, Object... arguments) {
-		Lock lock = new Lock(hazelcast, prefix, arguments);
+		Lock lock = new Lock(map, prefix, arguments);
 		lock.lock();
 		locks.push(lock);
 	}
 
 	/**
 	 * Unlocks and removes the last distributed global lock added to this
-	 * transaction.
+	 * stack.
 	 */
 	public void popLock() {
 		Lock lock = locks.pop();

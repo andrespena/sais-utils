@@ -27,18 +27,18 @@ public class Keyspace {
 
 	public Mutator getMutator(ConsistencyLevel consistencyLevel,
 	                          Integer ttlSeconds,
-	                          NullPolicy nullPolicy,
-	                          boolean synchronous,
-	                          boolean atomic) {
-		return new Mutator(this, ttlSeconds, consistencyLevel, nullPolicy, synchronous, atomic);
+	                          NullPolicy nullPolicy) {
+		return new Mutator(this, ttlSeconds, consistencyLevel, nullPolicy);
 	}
 
 	void execute(Mutator mutator) {
 		String statement = mutator.getBatchStatement();
-		if (mutator.isSynchronous())
-			session.execute(statement);
-		else
-			session.executeAsync(statement);
+		session.execute(statement);
+	}
+
+	void executeAsync(Mutator mutator) {
+		String statement = mutator.getBatchStatement();
+		session.executeAsync(statement);
 	}
 
 	public void shutdown() {
